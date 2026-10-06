@@ -6,7 +6,8 @@ import unittest
 from pathlib import Path
 
 from corner_analysis import (
-    CornerError, Thresholds, analyze, describe, detect_events, load_aligned, main,
+    AMBIGUOUS, CMP_ONLY, GROUPED, MATCHED, REF_ONLY, CornerError, Event, Thresholds, _classify,
+    _clusters, analyze, describe, detect_events, format_table, load_aligned, main,
 )
 from lap_compare import OUT_COLUMNS
 
@@ -219,6 +220,146 @@ class AnalyzeTests(unittest.TestCase):
         (ev,) = analyze(aligned(ref, cmp_))
         self.assertIsNone(ev.brake_start_diff_m)
         self.assertIn("braked on only one lap", " ".join(describe(ev)))
+
+
+def lap_from(speed_points, brake_zones, throttle_curves):
+    """Telemetry arrays: speed from points, brake=1 inside zones, throttle 0 from `off` to
+    `pickup`, then a linear ramp to 1 at `full` (throttle is 1 everywhere else)."""
+    sp = piecewise([(0.0, 300.0)] + speed_points + [(3000.0, 300.0)])
+    speed = [sp(d) for d in X]
+    brake = [1.0 if any(a <= d <= b for a, b in brake_zones) else 0.0 for d in X]
+    throttle = []
+    for d in X:
+        value = 1.0
+        for off, pickup, full in throttle_curves:
+            if off <= d < pickup:
+                value = 0.0
+            elif pickup <= d < full:
+                value = (d - pickup) / (full - pickup)
+        throttle.append(value)
+    return speed, brake, throttle
+
+
+def two_event_lap(a_brake=500, b_brake=655, a_min=90, b_min=95):
+    """Two corners 140 m apart; the speed recovers 55 km/h between the minima, so detection
+    reports TWO events (minima at 580 m and 720 m)."""
+    return lap_from(
+        [(500, 300), (580, a_min), (650, 150), (720, b_min), (860, 300)],
+        [(a_brake, 580), (b_brake, 720)], [(495, 580, 620), (650, 720, 760)])
+
+
+def one_event_lap(min_speed=95):
+    """The same section driven as one sequence: tiny recovery between the minima, so
+    detection merges it into ONE event (minimum at 580 m)."""
+    return lap_from(
+        [(500, 300), (580, min_speed), (650, 110), (720, 100), (860, 300)],
+        [(500, 720)], [(495, 720, 760)])
+
+
+def ev(start, end, min_m, min_kmh=100.0, brake=None, pickup=None, full=None):
+    return Event(start_m=start, end_m=end, min_speed_kmh=min_kmh, min_speed_m=min_m,
+                 brake_start_m=brake, peak_brake=1.0 if brake is not None else 0.0,
+                 pickup_m=pickup, full_throttle_m=full,
+                 start_idx=int(start / STEP), end_idx=int(end / STEP))
+
+
+class ReconciliationTests(unittest.TestCase):
+    def test_fixture_laps_detect_as_intended(self):
+        self.assertEqual(len(detect(two_event_lap())), 2)
+        self.assertEqual(len(detect(one_event_lap())), 1)
+
+    def test_one_event_vs_one_event(self):
+        (r,) = analyze(aligned(one_event_lap(), one_event_lap(min_speed=90)))
+        self.assertEqual(r.status, MATCHED)
+        self.assertAlmostEqual(r.min_speed_diff_kmh, -5.0)
+        self.assertEqual(r.brake_start_diff_m, 0.0)
+        self.assertEqual((len(r.ref_events), len(r.cmp_events)), (1, 1))
+
+    def test_two_reference_events_vs_one_comparison_event(self):
+        data = aligned(two_event_lap(), one_event_lap())
+        (r,) = analyze(data)
+        self.assertEqual(r.status, GROUPED)
+        self.assertEqual((len(r.ref_events), len(r.cmp_events)), (2, 1))
+        self.assertEqual(r.brake_start_diff_m, 0.0)  # earliest braking of the group vs the single event
+        self.assertEqual(r.pickup_diff_m, 0.0)  # exit of the LAST reference event vs the exit
+        self.assertEqual(r.full_throttle_diff_m, 0.0)
+        self.assertAlmostEqual(r.min_speed_diff_kmh, 5.0)  # lowest minima: 90 vs 95
+        first = min(r.ref.start_idx, r.cmp.start_idx)
+        last = max(r.ref.end_idx, r.cmp.end_idx)
+        self.assertAlmostEqual(r.time_delta_ms, data["delta_ms"][last] - data["delta_ms"][first])
+        self.assertIn("treated as one sequence", " ".join(describe(r)))
+
+    def test_one_reference_event_vs_two_comparison_events(self):
+        (r,) = analyze(aligned(one_event_lap(), two_event_lap()))
+        self.assertEqual(r.status, GROUPED)
+        self.assertEqual((len(r.ref_events), len(r.cmp_events)), (1, 2))
+        self.assertEqual(r.brake_start_diff_m, 0.0)
+        self.assertAlmostEqual(r.min_speed_diff_kmh, -5.0)
+
+    def test_nearby_but_genuinely_separate_corners_stay_separate(self):
+        ref = two_event_lap()
+        cmp_ = two_event_lap(a_brake=510, b_brake=675)  # brakes 10 m and 20 m later
+        a, b = analyze(aligned(ref, cmp_))
+        self.assertEqual((a.status, b.status), (MATCHED, MATCHED))
+        self.assertEqual((a.brake_start_diff_m, b.brake_start_diff_m), (10.0, 20.0))
+        self.assertEqual((a.name, b.name), ("Event 1", "Event 2"))
+
+    def test_extreme_brake_difference_is_ambiguous_not_reported(self):
+        ref = build_lap([corner(500, 600, 100)])
+        cmp_ = build_lap([corner(340, 600, 100)])  # same corner, braking 160 m earlier
+        (r,) = analyze(aligned(ref, cmp_))
+        self.assertEqual(r.status, AMBIGUOUS)
+        self.assertIn("braking point differs by 160 m", r.note)
+        self.assertIsNone(r.brake_start_diff_m)
+        self.assertIsNone(r.pickup_diff_m)
+        self.assertIsNotNone(r.time_delta_ms)  # time over the section is still measured by distance
+        text = " ".join(describe(r))
+        self.assertIn("AMBIGUOUS", text)
+        self.assertNotIn("braked", text)
+        self.assertIn("?", format_table([r]))
+
+    def test_unmatched_events_stay_unmatched(self):
+        results = analyze(aligned(build_lap([corner(500, 600, 100)]), build_lap([corner(1500, 1600, 100)])))
+        self.assertEqual([r.status for r in results], [REF_ONLY, CMP_ONLY])
+        self.assertTrue(all(not r.comparable for r in results))
+
+    # --- the clustering/classification rules on hand-built events
+    def test_clusters_one_to_one_and_separate_pairs(self):
+        ref = [ev(500, 620, 580), ev(655, 760, 720)]
+        cmp_ = [ev(505, 625, 582), ev(660, 765, 722)]
+        clusters = _clusters(ref, cmp_, Thresholds())
+        self.assertEqual(sorted(clusters), [([0], [0], False), ([1], [1], False)])
+
+    def test_two_to_two_overlap_is_ambiguous(self):
+        # Each comparison event spans parts of both reference events: no clean pairing.
+        ref = [ev(500, 640, 580), ev(600, 760, 720)]
+        cmp_ = [ev(520, 660, 600), ev(620, 780, 700)]
+        ((r_idx, c_idx, weak),) = _clusters(ref, cmp_, Thresholds())
+        self.assertEqual((r_idx, c_idx), ([0, 1], [0, 1]))
+        status, note = _classify([ref[i] for i in r_idx], [cmp_[i] for i in c_idx], weak, Thresholds())
+        self.assertEqual(status, AMBIGUOUS)
+        self.assertIn("2 events on the reference lap overlap 2 events", note)
+
+    def test_partial_overlap_is_ambiguous(self):
+        ref = [ev(500, 620, 580)]
+        cmp_ = [ev(585, 700, 650)]  # overlaps ~30% of the shorter event: neither same nor different
+        ((_, _, weak),) = _clusters(ref, cmp_, Thresholds())
+        self.assertTrue(weak)
+        self.assertEqual(_classify(ref, cmp_, weak, Thresholds())[0], AMBIGUOUS)
+
+    def test_far_apart_minima_inside_overlapping_ranges_are_ambiguous(self):
+        ref, cmp_ = [ev(500, 900, 560)], [ev(500, 900, 800)]
+        ((_, _, weak),) = _clusters(ref, cmp_, Thresholds())
+        status, note = _classify(ref, cmp_, weak, Thresholds())
+        self.assertEqual(status, AMBIGUOUS)
+        self.assertIn("240 m apart", note)
+
+    def test_group_spread_limit(self):
+        wide = [ev(500, 620, 560), ev(640, 1000, 900)]  # minima 340 m apart
+        single = [ev(500, 1000, 560)]
+        ((_, _, weak),) = _clusters(wide, single, Thresholds())
+        self.assertEqual(_classify(wide, single, weak, Thresholds())[0], AMBIGUOUS)
+        self.assertEqual(_classify(wide, single, weak, Thresholds(max_group_span_m=400.0))[0], GROUPED)
 
 
 class LoadAndCliTests(unittest.TestCase):

@@ -39,6 +39,14 @@ class CornerError(Exception):
     """The comparison CSV cannot be analysed."""
 
 
+# EventComparison.status values
+MATCHED = "matched"  # one reference event <-> one comparison event
+GROUPED = "grouped"  # one event on one lap <-> a nearby group of events on the other
+AMBIGUOUS = "ambiguous"  # events overlap but cannot be paired confidently
+REF_ONLY = "ref_only"
+CMP_ONLY = "cmp_only"
+
+
 @dataclass(frozen=True)
 class Thresholds:
     min_drop_kmh: float = 20.0  # minimum speed drop for a real event (ignores small lifts)
@@ -50,7 +58,13 @@ class Thresholds:
     full_throttle: float = 0.98  # "full throttle" threshold
     full_hold_samples: int = 3  # samples full throttle must hold (3 x 5 m = 15 m)
     max_exit_m: float = 600.0  # longest exit searched for full throttle
-    match_radius_m: float = 150.0  # max distance between matching events' minima
+    # Matching / reconciliation of events between the two laps
+    match_radius_m: float = 150.0  # max distance between the minima of a one-to-one match
+    min_overlap_fraction: float = 0.5  # range overlap (of the shorter event) for a confident link
+    weak_overlap_fraction: float = 0.2  # overlap in [weak, min) makes the match ambiguous
+    max_group_span_m: float = 300.0  # widest spread of minima allowed inside a grouped match
+    extreme_brake_diff_m: float = 120.0  # larger brake/pickup shifts are treated as mismatches
+    extreme_full_throttle_diff_m: float = 250.0  # same for the full-throttle point
 
 
 @dataclass(frozen=True)
@@ -71,29 +85,40 @@ class Event:
 class EventComparison:
     name: str
     position_m: float
-    ref: Event  # None if only the comparison lap has this event
-    cmp: Event  # None if only the reference lap has this event
+    ref: Event  # None if only the comparison lap has this event (a merged Event for a group)
+    cmp: Event  # None if only the reference lap has this event (a merged Event for a group)
     time_delta_ms: float  # comparison - reference through the event; None if unmatched
+    status: str = MATCHED  # MATCHED, GROUPED, AMBIGUOUS, REF_ONLY or CMP_ONLY
+    ref_events: tuple = ()  # the detected reference events behind `ref`
+    cmp_events: tuple = ()  # the detected comparison events behind `cmp`
+    note: str = ""  # why a match is ambiguous
 
-    @staticmethod
-    def _diff(a, b):
+    @property
+    def comparable(self):
+        """True when braking/throttle/speed differences are trustworthy."""
+        return self.status in (MATCHED, GROUPED)
+
+    def _diff(self, attr):
+        if not self.comparable:
+            return None
+        a, b = getattr(self.ref, attr), getattr(self.cmp, attr)
         return None if a is None or b is None else b - a
 
     @property
     def brake_start_diff_m(self):
-        return self._diff(self.ref and self.ref.brake_start_m, self.cmp and self.cmp.brake_start_m)
+        return self._diff("brake_start_m")
 
     @property
     def min_speed_diff_kmh(self):
-        return self._diff(self.ref and self.ref.min_speed_kmh, self.cmp and self.cmp.min_speed_kmh)
+        return self._diff("min_speed_kmh")
 
     @property
     def pickup_diff_m(self):
-        return self._diff(self.ref and self.ref.pickup_m, self.cmp and self.cmp.pickup_m)
+        return self._diff("pickup_m")
 
     @property
     def full_throttle_diff_m(self):
-        return self._diff(self.ref and self.ref.full_throttle_m, self.cmp and self.cmp.full_throttle_m)
+        return self._diff("full_throttle_m")
 
 
 def load_aligned(path):
@@ -187,7 +212,8 @@ def detect_events(x, speed, throttle, brake, th=Thresholds()):
         full = None
         if pickup is not None:
             hold = th.full_hold_samples
-            full = next((i for i in range(pickup, limit + 1)
+            # Never before the event's last minimum, so the event's range always covers it.
+            full = next((i for i in range(max(pickup, last), limit + 1)
                          if i + hold <= n and all(t >= th.full_throttle for t in throttle[i:i + hold])), None)
         end = full if full is not None else max(range(last, limit + 1), key=lambda i: (speed[i], i))
 
@@ -203,58 +229,175 @@ def detect_events(x, speed, throttle, brake, th=Thresholds()):
     return events
 
 
-def _match(ref_events, cmp_events, radius):
-    """Greedy nearest-first pairing of events by minimum-speed distance."""
-    pairs = sorted(
-        (abs(r.min_speed_m - c.min_speed_m), i, j)
-        for i, r in enumerate(ref_events) for j, c in enumerate(cmp_events)
-        if abs(r.min_speed_m - c.min_speed_m) <= radius
+def _range_overlap(a, b):
+    """Fraction of the shorter event's distance range covered by the other (0 if disjoint)."""
+    overlap = min(a.end_m, b.end_m) - max(a.start_m, b.start_m)
+    if overlap <= 0:
+        return 0.0
+    return min(overlap / max(min(a.end_m - a.start_m, b.end_m - b.start_m), 1e-9), 1.0)
+
+
+def _clusters(ref_events, cmp_events, th):
+    """Group events from both laps whose distance ranges overlap.
+
+    Strong links build the clusters: range overlap >= min_overlap_fraction, or a smaller
+    overlap (>= weak_overlap_fraction) where one event's minimum-speed point lies inside
+    the other event's range. A weak link
+    (overlap between weak_overlap_fraction and min_overlap_fraction) joins the clusters it
+    touches and marks the result ambiguous. Returns [(ref_indices, cmp_indices, weak)].
+    """
+    nodes = [("r", i) for i in range(len(ref_events))] + [("c", j) for j in range(len(cmp_events))]
+    parent = {n: n for n in nodes}
+
+    def find(n):
+        while parent[n] != n:
+            parent[n] = parent[parent[n]]
+            n = parent[n]
+        return n
+
+    weak_pairs = []
+    for i, r in enumerate(ref_events):
+        for j, c in enumerate(cmp_events):
+            frac = _range_overlap(r, c)
+            core_inside = (c.start_m <= r.min_speed_m <= c.end_m) or (r.start_m <= c.min_speed_m <= r.end_m)
+            if frac >= th.min_overlap_fraction or (core_inside and frac >= th.weak_overlap_fraction):
+                parent[find(("r", i))] = find(("c", j))
+            elif frac >= th.weak_overlap_fraction:
+                weak_pairs.append((("r", i), ("c", j)))
+
+    strong_roots = {n: find(n) for n in nodes}
+    weak_roots = set()
+    for a, b in weak_pairs:  # a weak link taints both clusters it touches
+        weak_roots.update((strong_roots[a], strong_roots[b]))
+        parent[find(a)] = find(b)
+
+    clusters = {}
+    for n in nodes:
+        clusters.setdefault(find(n), []).append(n)
+    out = []
+    for members in clusters.values():
+        weak = any(strong_roots[n] in weak_roots for n in members)
+        out.append((sorted(i for k, i in members if k == "r"), sorted(j for k, j in members if k == "c"), weak))
+    return out
+
+
+def _combine(events):
+    """One event representing a sequence of detected events (as detection would have merged)."""
+    if len(events) == 1:
+        return events[0]
+    lowest = min(events, key=lambda e: e.min_speed_kmh)
+    brakes = [e.brake_start_m for e in events if e.brake_start_m is not None]
+    return Event(
+        start_m=events[0].start_m, end_m=events[-1].end_m,
+        min_speed_kmh=lowest.min_speed_kmh, min_speed_m=lowest.min_speed_m,
+        brake_start_m=min(brakes) if brakes else None,
+        peak_brake=max(e.peak_brake for e in events),
+        pickup_m=events[-1].pickup_m, full_throttle_m=events[-1].full_throttle_m,
+        start_idx=events[0].start_idx, end_idx=events[-1].end_idx,
     )
-    used_r, used_c, matched = set(), set(), {}
-    for _, i, j in pairs:
-        if i not in used_r and j not in used_c:
-            used_r.add(i)
-            used_c.add(j)
-            matched[i] = j
-    return matched
+
+
+def _extreme(r, c, th):
+    """Reason string if the braking/throttle shifts are too large to trust, else None."""
+    for label, a, b, limit in (
+        ("braking point", r.brake_start_m, c.brake_start_m, th.extreme_brake_diff_m),
+        ("throttle pickup", r.pickup_m, c.pickup_m, th.extreme_brake_diff_m),
+        ("full-throttle point", r.full_throttle_m, c.full_throttle_m, th.extreme_full_throttle_diff_m),
+    ):
+        if a is not None and b is not None and abs(b - a) > limit:
+            return f"{label} differs by {abs(b - a):.0f} m, more than {limit:.0f} m"
+    return None
+
+
+def _classify(ref_group, cmp_group, weak, th):
+    """(status, note) for one cluster of reference and comparison events."""
+    if not ref_group:
+        return CMP_ONLY, ""
+    if not cmp_group:
+        return REF_ONLY, ""
+    plural = lambda n: f"{n} event" + ("s" if n != 1 else "")
+    if weak:
+        return AMBIGUOUS, "events only partly overlap their neighbours on the other lap"
+    if len(ref_group) > 1 and len(cmp_group) > 1:
+        return AMBIGUOUS, (f"{plural(len(ref_group))} on the reference lap overlap "
+                           f"{plural(len(cmp_group))} on the comparison lap")
+    r, c = _combine(ref_group), _combine(cmp_group)
+    if len(ref_group) == len(cmp_group) == 1:
+        if abs(r.min_speed_m - c.min_speed_m) > th.match_radius_m:
+            return AMBIGUOUS, (f"minimum speeds are {abs(r.min_speed_m - c.min_speed_m):.0f} m apart "
+                               "inside overlapping ranges")
+        status = MATCHED
+    else:
+        group = ref_group if len(ref_group) > 1 else cmp_group
+        spread = group[-1].min_speed_m - group[0].min_speed_m
+        if spread > th.max_group_span_m:
+            return AMBIGUOUS, f"grouped events span {spread:.0f} m, more than {th.max_group_span_m:.0f} m"
+        status = GROUPED
+    reason = _extreme(r, c, th)
+    return (AMBIGUOUS, reason) if reason else (status, "")
 
 
 def analyze(data, th=Thresholds()):
-    """Detect events on both laps, match them, and return a list of EventComparison."""
+    """Detect events on both laps, reconcile them, and return a list of EventComparison.
+
+    Events are paired by overlapping distance ranges (not by order): one event may match a
+    nearby group of events on the other lap, and uncertain pairings are flagged AMBIGUOUS
+    so no braking/throttle comparison is reported for them.
+    """
     x, delta = data["distance_m"], data["delta_ms"]
     ref = detect_events(x, data["ref_speed_kmh"], data["ref_throttle"], data["ref_brake"], th)
     cmp_ = detect_events(x, data["cmp_speed_kmh"], data["cmp_throttle"], data["cmp_brake"], th)
-    matched = _match(ref, cmp_, th.match_radius_m)
 
     rows = []
-    for i, r in enumerate(ref):
-        if i in matched:
-            c = cmp_[matched[i]]
-            first, last = min(r.start_idx, c.start_idx), max(r.end_idx, c.end_idx)
-            rows.append((r.min_speed_m, r, c, delta[last] - delta[first]))  # shared window
-        else:
-            rows.append((r.min_speed_m, r, None, None))
-    matched_c = set(matched.values())
-    rows += [(c.min_speed_m, None, c, None) for j, c in enumerate(cmp_) if j not in matched_c]
+    for ref_idx, cmp_idx, weak in _clusters(ref, cmp_, th):
+        ref_group, cmp_group = [ref[i] for i in ref_idx], [cmp_[j] for j in cmp_idx]
+        status, note = _classify(ref_group, cmp_group, weak, th)
+        if status in (REF_ONLY, CMP_ONLY):  # unmatched events are listed one by one
+            for ev in ref_group + cmp_group:
+                rows.append((ev.min_speed_m, EventComparison(
+                    "", ev.min_speed_m, ev if status == REF_ONLY else None,
+                    ev if status == CMP_ONLY else None, None, status,
+                    (ev,) if status == REF_ONLY else (), (ev,) if status == CMP_ONLY else ())))
+            continue
+        r, c = _combine(ref_group), _combine(cmp_group)
+        first, last = min(r.start_idx, c.start_idx), max(r.end_idx, c.end_idx)
+        rows.append((r.min_speed_m, EventComparison(
+            "", r.min_speed_m, r, c, delta[last] - delta[first],  # time over the shared window
+            status, tuple(ref_group), tuple(cmp_group), note)))
     rows.sort(key=lambda row: row[0])
-    return [EventComparison(f"Event {n}", pos, r, c, t) for n, (pos, r, c, t) in enumerate(rows, 1)]
+    return [replace(ev, name=f"Event {n}") for n, (_, ev) in enumerate(rows, 1)]
 
 
 # ---------------------------------------------------------------- reporting
 
-def _num(value, fmt):
-    return "-" if value is None else format(value, fmt)
+def _num(value, fmt, hidden=False):
+    return "?" if hidden else "-" if value is None else format(value, fmt)
+
+
+def _events_text(events):
+    return ", ".join(f"min {e.min_speed_kmh:.0f} km/h at {e.min_speed_m:.0f} m" for e in events)
 
 
 def describe(ev):
     """Sentence-style differences for one event (comparison relative to reference)."""
-    if ev.ref is None:
+    if ev.status == CMP_ONLY:
         return [f"only the comparison lap has an event here (min {ev.cmp.min_speed_kmh:.0f} km/h "
                 f"at {ev.cmp.min_speed_m:.0f} m)"]
-    if ev.cmp is None:
+    if ev.status == REF_ONLY:
         return [f"only the reference lap has an event here (min {ev.ref.min_speed_kmh:.0f} km/h "
                 f"at {ev.ref.min_speed_m:.0f} m)"]
+    t = ev.time_delta_ms / 1000
+    time_text = (f"{abs(t):.3f} s {'lost' if t > 0 else 'gained'} through the event"
+                 if abs(t) >= 0.0005 else "no time difference through the event")
+    if ev.status == AMBIGUOUS:
+        return [f"AMBIGUOUS match ({ev.note}) - no braking/throttle comparison",
+                f"reference: {_events_text(ev.ref_events)}",
+                f"comparison: {_events_text(ev.cmp_events)}",
+                f"{time_text.replace('the event', 'this section')} (measured by distance, still valid)"]
     lines = []
+    if ev.status == GROUPED:
+        lines.append(f"{len(ev.ref_events)} reference event(s) vs {len(ev.cmp_events)} comparison "
+                     "event(s) treated as one sequence")
     d = ev.brake_start_diff_m
     if d is not None:
         lines.append("braked at the same point" if round(abs(d)) == 0
@@ -268,9 +411,7 @@ def describe(ev):
         if d is not None:
             lines.append(f"{label} at the same point" if round(abs(d)) == 0
                          else f"{label} {abs(d):.0f} m {'earlier' if d < 0 else 'later'}")
-    t = ev.time_delta_ms / 1000
-    lines.append(f"{abs(t):.3f} s {'lost' if t > 0 else 'gained'} through the event"
-                 if abs(t) >= 0.0005 else "no time difference through the event")
+    lines.append(time_text)
     return lines
 
 
@@ -280,12 +421,13 @@ def format_table(results):
     rows = []
     for ev in results:
         r, c = ev.ref, ev.cmp
+        amb = ev.status == AMBIGUOUS
         rows.append([
-            ev.name, f"{ev.position_m:.0f}", _num(ev.brake_start_diff_m, "+.0f"),
+            ev.name, f"{ev.position_m:.0f}", _num(ev.brake_start_diff_m, "+.0f", amb),
             f"{_num(r and r.peak_brake * 100, '.0f')} / {_num(c and c.peak_brake * 100, '.0f')}",
             f"{_num(r and r.min_speed_kmh, '.0f')} / {_num(c and c.min_speed_kmh, '.0f')}",
-            _num(ev.min_speed_diff_kmh, "+.1f"), _num(ev.pickup_diff_m, "+.0f"),
-            _num(ev.full_throttle_diff_m, "+.0f"),
+            _num(ev.min_speed_diff_kmh, "+.1f", amb), _num(ev.pickup_diff_m, "+.0f", amb),
+            _num(ev.full_throttle_diff_m, "+.0f", amb),
             _num(None if ev.time_delta_ms is None else ev.time_delta_ms / 1000, "+.3f"),
         ])
     widths = [max(len(row[i]) for row in [cols, sub] + rows) for i in range(len(cols))]
@@ -320,6 +462,9 @@ def main(argv=None):
     print(f"Detected {len(results)} events (differences are comparison minus reference; "
           "Time: + = comparison lost time)\n")
     print(format_table(results))
+    if any(ev.status == AMBIGUOUS for ev in results):
+        print("? = ambiguous match: events overlap but cannot be paired confidently, so no "
+              "braking/throttle difference is shown (see Details)")
     print("\nDetails")
     for ev in results:
         print(f"  {ev.name} (~{ev.position_m:.0f} m): " + "; ".join(describe(ev)))
