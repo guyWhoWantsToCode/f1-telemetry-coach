@@ -6,6 +6,7 @@ import time
 
 from car_telemetry import CAR_TELEMETRY_PACKET_ID, format_car_telemetry, parse_car_telemetry
 from lap_data import LAP_DATA_PACKET_ID, format_lap_data, parse_lap_data
+from lap_recorder import LapRecorder
 from packet_header import parse_header
 
 HOST = "0.0.0.0"  # all local interfaces
@@ -20,9 +21,14 @@ MODES = {
 
 def main():
     arg_parser = argparse.ArgumentParser(description="Listen for F1 25 UDP telemetry.")
-    arg_parser.add_argument("--show", choices=MODES, default="telemetry",
-                            help="which decoded packets to print (default: telemetry)")
-    packet_id, parse, fmt = MODES[arg_parser.parse_args().show]
+    arg_parser.add_argument("--show", choices=MODES,
+                            help="which decoded packets to print (default: telemetry, "
+                                 "or nothing when --record is used)")
+    arg_parser.add_argument("--record", action="store_true",
+                            help="save each completed lap to data/laps/ as CSV")
+    args = arg_parser.parse_args()
+    show = args.show or (None if args.record else "telemetry")
+    recorder = LapRecorder() if args.record else None
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -34,6 +40,8 @@ def main():
 
     sock.settimeout(1.0)  # lets Ctrl+C work and lets us report idle time
     print(f"Listening on UDP {HOST}:{PORT} (Ctrl+C to stop)...")
+    if recorder:
+        print("Recording laps to data/laps/ ...")
 
     count = 0
     window_start = time.monotonic()
@@ -50,12 +58,25 @@ def main():
 
             if data is not None:
                 count += 1
-                # Only the selected packet type for the player's car is printed; all packets are counted.
+                # Only the player's car is decoded; all packets are counted.
                 try:
                     header = parse_header(data)
-                    if header.packet_id == packet_id:
+                    for name, (packet_id, parse, fmt) in MODES.items():
+                        if header.packet_id != packet_id:
+                            continue
+                        if show != name and recorder is None:
+                            continue
                         decoded = parse(data, header.player_car_index)
-                        print(f"{ip} {len(data)}B ~{pps:.0f}pkt/s | {fmt(decoded)}")
+                        if show == name:
+                            print(f"{ip} {len(data)}B ~{pps:.0f}pkt/s | {fmt(decoded)}")
+                        if recorder:
+                            frame = header.overall_frame_identifier
+                            if name == "telemetry":
+                                saved = recorder.on_telemetry(decoded, frame)
+                            else:
+                                saved = recorder.on_lap_data(header.session_uid, decoded, frame)
+                            if saved:
+                                print(f"Saved lap: {saved}")
                 except ValueError as e:
                     print(f"{ip} {len(data)}B parse error: {e}")
 
@@ -68,6 +89,8 @@ def main():
                 window_start = now
     except KeyboardInterrupt:
         print("\nStopped.")
+        if recorder:
+            print(f"Lap packets without matching-frame telemetry: {recorder.unmatched_samples}")
     finally:
         sock.close()
 
