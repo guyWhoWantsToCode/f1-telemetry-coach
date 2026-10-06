@@ -29,3 +29,5 @@ Thumbs.db
 *.csv
 *.log
 data/
+
+.claude/

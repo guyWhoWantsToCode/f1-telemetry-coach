@@ -1,0 +1,51 @@
+/* Design tokens. Everything visual in the app comes from these variables. */
+:root {
+  color-scheme: dark;
+
+  /* Spacing: 8px grid (one 4px half-step for hairline gaps) */
+  --space-half: 4px;
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 32px;
+  --space-5: 40px;
+  --space-6: 48px;
+
+  /* One radius for every control, panel and badge */
+  --radius: 4px;
+
+  /* Neutral palette */
+  --color-bg: #0c0e11;
+  --color-panel: #13161a;
+  --color-panel-raised: #1a1e24;
+  --color-border: #252a31;
+  --color-border-strong: #363d47;
+  --color-text: #d5dae0;
+  --color-text-muted: #8b939d;
+  --color-text-dim: #5f6872;
+
+  /* Accent: selection and focus only */
+  --color-accent: #6f9fd0;
+  --color-accent-bg: #18222e;
+
+  /* Semantic colors. Green = time gained, red = time lost, amber = invalid / ambiguous. */
+  --color-gain: #3fb27f;
+  --color-loss: #e5534b;
+  --color-warn: #d6a23a;
+
+  /* Typography */
+  --font-sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "Cascadia Mono", "Consolas", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --text-xs: 11px;
+  --text-sm: 12px;
+  --text-md: 13px;
+  --text-lg: 16px;
+  --text-xl: 24px;
+  --leading-tight: 16px;
+  --leading-normal: 24px;
+
+  /* Control and row heights (multiples of 8) */
+  --control-height: 32px;
+  --control-height-sm: 24px;
+  --row-height: 32px;
+}
