@@ -1,5 +1,5 @@
 /* The only place that talks to the backend. Components call these functions, never fetch(). */
-import type { CompareResponse, ComparisonDetail, EventsResponse, LapsResponse } from './types'
+import type { CompareResponse, ComparisonDetail, EventsResponse, LapsResponse, RecordingStatus } from './types'
 
 export const API_BASE: string = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
 
@@ -63,3 +63,10 @@ export const getEvents = (comparisonId: string, signal?: AbortSignal) =>
 
 export const getComparison = (comparisonId: string, signal?: AbortSignal) =>
   request<ComparisonDetail>(`/api/comparisons/${encodeURIComponent(comparisonId)}`, { signal })
+
+export const getRecordingStatus = (signal?: AbortSignal) =>
+  request<RecordingStatus>('/api/recording/status', { signal })
+
+export const startRecording = () => request<RecordingStatus>('/api/recording/start', { method: 'POST' })
+
+export const stopRecording = () => request<RecordingStatus>('/api/recording/stop', { method: 'POST' })

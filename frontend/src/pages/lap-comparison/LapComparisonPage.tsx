@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { API_BASE, compareLaps, getComparison, getEvents, getLaps } from '../../api/client'
 import type { LapMeta } from '../../api/types'
 import { TelemetryPanel } from '../../charts/TelemetryPanel'
-import { Badge, Button, Checkbox, Notice, Panel, Placeholder } from '../../design'
+import { Button, Checkbox, Notice, Panel, Placeholder } from '../../design'
 import { useAsyncAction } from '../../hooks/useAsyncAction'
+import { RecordingControl } from '../../recording/RecordingControl'
+import { useRecording } from '../../recording/useRecording'
 import { EventsTable } from './EventsTable'
 import { LapTable } from './LapTable'
 import { Summary } from './Summary'
@@ -28,19 +30,22 @@ function defaultSelection(laps: LapMeta[]): { ref: string | null; cmp: string | 
   return { ref: best.id, cmp: next?.id ?? null }
 }
 
-function SelectedLap({ label, lap }: { label: string; lap: LapMeta | undefined }) {
+/** One selected lap in the comparison panel; the swatch matches its trace color in the charts. */
+function SelectedLap({ role, lap }: { role: 'ref' | 'cmp'; lap: LapMeta | undefined }) {
   return (
-    <span className="selection__slot">
-      <span className="selection__label">{label}</span>
+    <div className="selected-lap">
+      <span className="selected-lap__swatch" style={{ background: `var(--chart-${role})` }} />
+      <span className="selected-lap__role">{role === 'ref' ? 'Reference' : 'Comparison'}</span>
       {lap ? (
         <>
-          <span className="mono">Lap {lap.lap_number} {lap.lap_time ?? ''}</span>
-          {lap.valid ? <Badge>Valid</Badge> : <Badge tone="warn">Invalid</Badge>}
+          <span className="selected-lap__lap mono">Lap {lap.lap_number}</span>
+          <span className="selected-lap__time mono">{lap.lap_time ?? '—'}</span>
+          <span className={`status ${lap.valid ? 'status--valid' : 'status--invalid'}`}>{lap.valid ? 'Valid' : 'Invalid'}</span>
         </>
       ) : (
         <span className="text-dim">not selected</span>
       )}
-    </span>
+    </div>
   )
 }
 
@@ -54,6 +59,7 @@ export default function LapComparisonPage() {
   const [allowInvalid, setAllowInvalid] = useState(false)
 
   const { run: fetchLaps } = laps
+  const recording = useRecording(useCallback(() => void fetchLaps(), [fetchLaps]))
   useEffect(() => {
     void fetchLaps().then((res) => {
       if (!res) return
@@ -99,55 +105,57 @@ export default function LapComparisonPage() {
       <header className="topbar">
         <h1 className="topbar__title">F1 Telemetry Coach</h1>
         <span className="topbar__page">Lap comparison</span>
+        <span className="grow" />
+        <RecordingControl {...recording} onStart={() => void recording.start()} onStop={() => void recording.stop()} />
       </header>
       <main className="page">
-        <Panel
-          title="Recorded laps"
-          flush
-          actions={<Button size="sm" onClick={() => void fetchLaps()} disabled={laps.state.status === 'loading'}>Reload</Button>}
-        >
-          {laps.state.status === 'loading' && <Placeholder>Loading laps from {API_BASE}...</Placeholder>}
-          {laps.state.status === 'error' && (
-            <div className="panel__body"><Notice tone="error" title="Could not load laps">{laps.state.error}</Notice></div>
-          )}
-          {laps.state.status === 'ready' && lapList.length === 0 && (
-            <Placeholder>
-              No recorded laps found in data/laps. Record some with: python udp_listener.py --record
-            </Placeholder>
-          )}
-          {lapList.length > 0 && (
-            <LapTable laps={lapList} refId={refId} cmpId={cmpId} onSelectRef={selectRef} onSelectCmp={selectCmp} />
-          )}
-          {laps.state.status === 'ready' && laps.state.data.skipped.length > 0 && (
-            <div className="panel__body">
-              <Notice tone="warn" title={`${laps.state.data.skipped.length} lap file(s) could not be read`}>
-                <ul>{laps.state.data.skipped.map((s) => <li key={s.id}>{s.id}: {s.error}</li>)}</ul>
-              </Notice>
-            </div>
-          )}
-        </Panel>
-
-        {lapList.length > 0 && (
-          <Panel title="Comparison">
-            <div className="selection">
-              <SelectedLap label="Reference" lap={refLap} />
-              <SelectedLap label="Comparison" lap={cmpLap} />
-              <span className="grow" />
-              {hint && <span className="text-muted">{hint}</span>}
-              <Checkbox label="Allow invalid laps" checked={allowInvalid}
-                onChange={(e) => setAllowInvalid(e.target.checked)} />
-              <Button variant="primary" disabled={!canCompare} onClick={() => void onCompare()}>
-                {busy ? 'Comparing...' : 'Compare'}
-              </Button>
-            </div>
+        <div className="workspace">
+          <Panel
+            title="Recorded laps"
+            flush
+            actions={<Button size="sm" onClick={() => void fetchLaps()} disabled={laps.state.status === 'loading'}>Reload</Button>}
+          >
+            {laps.state.status === 'loading' && <Placeholder>Loading laps from {API_BASE}...</Placeholder>}
+            {laps.state.status === 'error' && (
+              <div className="panel__body"><Notice tone="error" title="Could not load laps">{laps.state.error}</Notice></div>
+            )}
+            {laps.state.status === 'ready' && lapList.length === 0 && (
+              <Placeholder>
+                No recorded laps found in data/laps. Record some with: python udp_listener.py --record
+              </Placeholder>
+            )}
+            {lapList.length > 0 && (
+              <LapTable laps={lapList} refId={refId} cmpId={cmpId} onSelectRef={selectRef} onSelectCmp={selectCmp} />
+            )}
+            {laps.state.status === 'ready' && laps.state.data.skipped.length > 0 && (
+              <div className="panel__body">
+                <Notice tone="warn" title={`${laps.state.data.skipped.length} lap file(s) could not be read`}>
+                  <ul>{laps.state.data.skipped.map((s) => <li key={s.id}>{s.id}: {s.error}</li>)}</ul>
+                </Notice>
+              </div>
+            )}
           </Panel>
-        )}
 
-        {compare.state.status === 'error' && (
-          <Notice tone="error" title="Comparison failed">{compare.state.error}</Notice>
-        )}
-        {compare.state.status === 'loading' && <Placeholder>Comparing laps...</Placeholder>}
-        {compare.state.status === 'ready' && <Summary result={compare.state.data} />}
+          {lapList.length > 0 && (
+            <Panel title="Comparison" flush>
+              <SelectedLap role="ref" lap={refLap} />
+              <SelectedLap role="cmp" lap={cmpLap} />
+              <div className="actions">
+                <Checkbox label="Allow invalid laps" checked={allowInvalid}
+                  onChange={(e) => setAllowInvalid(e.target.checked)} />
+                <span className="actions__hint text-muted">{hint}</span>
+                <Button variant="primary" disabled={!canCompare} onClick={() => void onCompare()}>
+                  {busy ? 'Comparing...' : 'Compare'}
+                </Button>
+              </div>
+              {compare.state.status === 'error' && (
+                <div className="panel__body"><Notice tone="error" title="Comparison failed">{compare.state.error}</Notice></div>
+              )}
+              {compare.state.status === 'loading' && <Placeholder>Comparing laps...</Placeholder>}
+              {compare.state.status === 'ready' && <Summary result={compare.state.data} />}
+            </Panel>
+          )}
+        </div>
 
         {compare.state.status === 'ready' && <TelemetryPanel state={detail.state} />}
 

@@ -2,59 +2,65 @@
 :root {
   color-scheme: dark;
 
-  /* Spacing: 8px grid (one 4px half-step for hairline gaps) */
+  /* Spacing: 8px grid, with one 4px half-step for tight internal gaps */
   --space-half: 4px;
   --space-1: 8px;
   --space-2: 16px;
   --space-3: 24px;
   --space-4: 32px;
   --space-5: 40px;
-  --space-6: 48px;
 
-  /* One radius for every control, panel and badge */
-  --radius: 4px;
+  /* One small radius for every control, badge and message */
+  --radius: 2px;
 
-  /* Neutral palette */
-  --color-bg: #0c0e11;
-  --color-panel: #13161a;
-  --color-panel-raised: #1a1e24;
-  --color-border: #252a31;
-  --color-border-strong: #363d47;
-  --color-text: #d5dae0;
-  --color-text-muted: #8b939d;
-  --color-text-dim: #5f6872;
+  /* Surfaces, from the page background up to raised controls */
+  --color-bg: #0b0d10;          /* page, and the plot area behind charts */
+  --color-panel: #121519;       /* working surface: tables, readouts */
+  --color-panel-raised: #181c21; /* controls */
+  --color-hover: #161a1f;       /* row hover */
+  --color-selected: #14202c;    /* selected row / pressed control */
 
-  /* Accent: selection and focus only */
+  /* Hairlines */
+  --color-border: #232830;
+  --color-border-strong: #343b45;
+
+  /* Text */
+  --color-text: #d8dce1;
+  --color-text-muted: #8a929c;
+  --color-text-dim: #5c6571;
+
+  /* Interaction: selection and focus only */
   --color-accent: #6f9fd0;
-  --color-accent-bg: #18222e;
+  --color-accent-bg: #14202c;
 
-  /* Semantic colors. Green = time gained, red = time lost, amber = invalid / ambiguous. */
+  /* Semantic colors. Green = time gained, red = time lost, amber = warning / invalid / ambiguous.
+     They are never used decoratively. */
   --color-gain: #3fb27f;
   --color-loss: #e5534b;
   --color-warn: #d6a23a;
 
-  /* Chart colors. Red/green stay reserved for time lost / gained (delta fills only). */
+  /* Chart colors. Reference and comparison traces are neutral/blue; red/green appear only
+     as the delta fill. */
   --chart-ref: #b4bcc6;
   --chart-cmp: #6f9fd0;
-  --chart-delta: #d5dae0;
-  --chart-grid: #1f242b;
-  --chart-axis: #8b939d;
-  --chart-cursor: #8b939d;
-  --chart-zero: #d5dae0;
+  --chart-delta: #d8dce1;
+  --chart-grid: #1c2128;
+  --chart-axis: #8a929c;
+  --chart-cursor: #8a929c;
+  --chart-zero: #d8dce1;
 
-  /* Typography */
+  /* Typography: sans for UI text, mono for every measured value */
   --font-sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "Cascadia Mono", "Consolas", ui-monospace, "SFMono-Regular", Menlo, monospace;
-  --text-xs: 11px;
-  --text-sm: 12px;
-  --text-md: 13px;
-  --text-lg: 16px;
-  --text-xl: 24px;
+  --text-xs: 11px;   /* labels, column headers */
+  --text-sm: 12px;   /* controls, table cells, explanations */
+  --text-md: 13px;   /* body */
+  --text-lg: 14px;   /* key values (lap times, deltas) */
+  --text-xl: 16px;   /* the one number that should stand out */
   --leading-tight: 16px;
   --leading-normal: 24px;
 
-  /* Control and row heights (multiples of 8) */
-  --control-height: 32px;
-  --control-height-sm: 24px;
-  --row-height: 32px;
+  /* Control and row heights: every button, input and table row shares one height */
+  --control-height: 24px;
+  --row-height: 24px;
 }

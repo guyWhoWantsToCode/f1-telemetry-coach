@@ -20,10 +20,12 @@ export function Panel(props: {
   title?: string
   actions?: ReactNode
   flush?: boolean
+  /** "plot" puts the panel on the page background, for charts. */
+  surface?: 'default' | 'plot'
   children: ReactNode
 }) {
   return (
-    <section className="panel">
+    <section className={cx('panel', props.surface === 'plot' && 'panel--plot')}>
       {(props.title || props.actions) && (
         <header className="panel__header">
           <h2 className="panel__title">{props.title}</h2>
@@ -38,17 +40,19 @@ export function Panel(props: {
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: 'default' | 'primary' | 'toggle'
   size?: 'md' | 'sm'
+  /** Small-caps label, like a labelled panel switch. */
+  instrument?: boolean
   pressed?: boolean
 }
 
-export function Button({ variant = 'default', size = 'md', pressed, className, ...rest }: ButtonProps) {
+export function Button({ variant = 'default', size = 'md', instrument, pressed, className, ...rest }: ButtonProps) {
   return (
     <button
       type="button"
       {...rest}
       aria-pressed={variant === 'toggle' ? !!pressed : undefined}
       className={cx('btn', variant === 'primary' && 'btn--primary', variant === 'toggle' && 'btn--toggle',
-        size === 'sm' && 'btn--sm', className)}
+        size === 'sm' && 'btn--sm', instrument && 'btn--instrument', className)}
     />
   )
 }
@@ -70,17 +74,19 @@ export function Badge({ tone = 'neutral', children, title }: {
   return <span className={cx('badge', tone === 'warn' && 'badge--warn', tone === 'accent' && 'badge--accent')} title={title}>{children}</span>
 }
 
-export function Readout({ label, value, sub, tone = 'neutral' }: {
+/** One labelled measurement per row. `emphasis` marks the single number that should stand out. */
+export function Readout({ label, value, sub, tone = 'neutral', emphasis }: {
   label: string
   value: ReactNode
   sub?: ReactNode
   tone?: Tone
+  emphasis?: boolean
 }) {
   return (
     <div className="readout">
       <span className="readout__label">{label}</span>
-      <span className={cx('readout__value', 'mono', toneClass[tone])}>{value}</span>
-      {sub && <span className="readout__sub">{sub}</span>}
+      <span className={cx('readout__value', 'mono', emphasis && 'readout__value--key', toneClass[tone])}>{value}</span>
+      <span className="readout__sub">{sub}</span>
     </div>
   )
 }

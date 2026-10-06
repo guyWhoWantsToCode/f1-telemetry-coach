@@ -159,5 +159,5 @@ export function TelemetryPanel({ state }: { state: AsyncState<ComparisonDetail> 
   else if (parsed?.problem) body = <div className="panel__body"><Notice tone="error" title="Telemetry data is malformed">{parsed.problem.message}</Notice></div>
   else if (parsed?.data && state.status === 'ready') body = <Charts detail={state.data} data={parsed.data} />
 
-  return <Panel title="Telemetry by lap distance" flush>{body}</Panel>
+  return <Panel title="Telemetry by lap distance" flush surface="plot">{body}</Panel>
 }

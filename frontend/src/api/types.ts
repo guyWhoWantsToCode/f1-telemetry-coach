@@ -90,3 +90,23 @@ export interface ComparisonDetail {
   summary: Partial<ComparisonSummary>
   data: Record<string, unknown>
 }
+
+export type RecordingState = 'idle' | 'waiting' | 'recording' | 'error'
+
+/** GET/POST /api/recording/* (see api/recording.py). */
+export interface RecordingStatus {
+  state: RecordingState
+  running: boolean
+  receiving: boolean
+  packets_per_second: number
+  packets_total: number
+  session_uid: string | null
+  current_lap: number | null
+  laps_saved: number
+  saved_laps: string[]
+  unmatched_samples: number
+  parse_errors: number
+  last_error: string | null
+  port: number
+  started_at: number | null
+}
