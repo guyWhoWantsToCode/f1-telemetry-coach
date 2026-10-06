@@ -3,7 +3,8 @@
 import socket
 import time
 
-from packet_header import format_header, parse_header
+from car_telemetry import CAR_TELEMETRY_PACKET_ID, format_car_telemetry, parse_car_telemetry
+from packet_header import parse_header
 
 HOST = "0.0.0.0"  # all local interfaces
 PORT = 20777
@@ -36,12 +37,14 @@ def main():
 
             if data is not None:
                 count += 1
-                line = f"From {ip}  size={len(data)} bytes  ~{pps:.0f} pkt/s"
+                # Only the player's Car Telemetry packets are printed; all packets are counted.
                 try:
-                    line += "  | " + format_header(parse_header(data))
+                    header = parse_header(data)
+                    if header.packet_id == CAR_TELEMETRY_PACKET_ID:
+                        car = parse_car_telemetry(data, header.player_car_index)
+                        print(f"{ip} {len(data)}B ~{pps:.0f}pkt/s | {format_car_telemetry(car)}")
                 except ValueError as e:
-                    line += f"  | header error: {e}"
-                print(line)
+                    print(f"{ip} {len(data)}B parse error: {e}")
 
             now = time.monotonic()
             if now - window_start >= 1.0:
