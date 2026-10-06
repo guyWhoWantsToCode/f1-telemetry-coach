@@ -3,6 +3,8 @@
 import socket
 import time
 
+from packet_header import format_header, parse_header
+
 HOST = "0.0.0.0"  # all local interfaces
 PORT = 20777
 
@@ -34,7 +36,12 @@ def main():
 
             if data is not None:
                 count += 1
-                print(f"From {ip}  size={len(data)} bytes  ~{pps:.0f} pkt/s")
+                line = f"From {ip}  size={len(data)} bytes  ~{pps:.0f} pkt/s"
+                try:
+                    line += "  | " + format_header(parse_header(data))
+                except ValueError as e:
+                    line += f"  | header error: {e}"
+                print(line)
 
             now = time.monotonic()
             if now - window_start >= 1.0:
