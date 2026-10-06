@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { API_BASE, compareLaps, getEvents, getLaps } from '../../api/client'
+import { API_BASE, compareLaps, getComparison, getEvents, getLaps } from '../../api/client'
 import type { LapMeta } from '../../api/types'
+import { TelemetryPanel } from '../../charts/TelemetryPanel'
 import { Badge, Button, Checkbox, Notice, Panel, Placeholder } from '../../design'
 import { useAsyncAction } from '../../hooks/useAsyncAction'
 import { EventsTable } from './EventsTable'
@@ -15,6 +16,7 @@ const loadLaps = (signal: AbortSignal) => getLaps(signal)
 const runCompare = (signal: AbortSignal, ref: string, cmp: string, allowInvalid: boolean) =>
   compareLaps(ref, cmp, allowInvalid, signal)
 const loadEvents = (signal: AbortSignal, comparisonId: string) => getEvents(comparisonId, signal)
+const loadComparison = (signal: AbortSignal, comparisonId: string) => getComparison(comparisonId, signal)
 
 /** Starting selection from the real laps: fastest valid lap as reference, next lap as comparison. */
 function defaultSelection(laps: LapMeta[]): { ref: string | null; cmp: string | null } {
@@ -46,6 +48,7 @@ export default function LapComparisonPage() {
   const laps = useAsyncAction(loadLaps)
   const compare = useAsyncAction(runCompare)
   const events = useAsyncAction(loadEvents)
+  const detail = useAsyncAction(loadComparison)
   const [refId, setRefId] = useState<string | null>(null)
   const [cmpId, setCmpId] = useState<string | null>(null)
   const [allowInvalid, setAllowInvalid] = useState(false)
@@ -82,8 +85,9 @@ export default function LapComparisonPage() {
   const onCompare = async () => {
     if (!refLap || !cmpLap) return
     events.reset()
+    detail.reset()
     const result = await compare.run(refLap.id, cmpLap.id, allowInvalid)
-    if (result) await events.run(result.id)
+    if (result) await Promise.all([detail.run(result.id), events.run(result.id)])
   }
 
   let hint: string | null = null
@@ -144,6 +148,8 @@ export default function LapComparisonPage() {
         )}
         {compare.state.status === 'loading' && <Placeholder>Comparing laps...</Placeholder>}
         {compare.state.status === 'ready' && <Summary result={compare.state.data} />}
+
+        {compare.state.status === 'ready' && <TelemetryPanel state={detail.state} />}
 
         {compare.state.status === 'ready' && (
           <Panel

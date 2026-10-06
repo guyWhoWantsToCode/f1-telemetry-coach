@@ -33,6 +33,15 @@
   --color-loss: #e5534b;
   --color-warn: #d6a23a;
 
+  /* Chart colors. Red/green stay reserved for time lost / gained (delta fills only). */
+  --chart-ref: #b4bcc6;
+  --chart-cmp: #6f9fd0;
+  --chart-delta: #d5dae0;
+  --chart-grid: #1f242b;
+  --chart-axis: #8b939d;
+  --chart-cursor: #8b939d;
+  --chart-zero: #d5dae0;
+
   /* Typography */
   --font-sans: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "Cascadia Mono", "Consolas", ui-monospace, "SFMono-Regular", Menlo, monospace;

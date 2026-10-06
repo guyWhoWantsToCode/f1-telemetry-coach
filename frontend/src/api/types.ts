@@ -81,3 +81,12 @@ export interface EventsResponse {
   count: number
   events: EventRow[]
 }
+
+/** GET /api/comparisons/{id}. `data` holds the aligned columns; it is validated before charting. */
+export interface ComparisonDetail {
+  id: string
+  reference: LapMeta | null
+  comparison: LapMeta | null
+  summary: Partial<ComparisonSummary>
+  data: Record<string, unknown>
+}
