@@ -1,1 +1,4 @@
 matplotlib
+fastapi
+uvicorn
+httpx
