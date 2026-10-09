@@ -24,6 +24,9 @@ class DataStore:
         self.data_dir = Path(data_dir) if data_dir is not None else DEFAULT_DATA_DIR
         self.laps_dir = self.data_dir / "laps"
         self.comparisons_dir = self.data_dir / "comparisons"
+        self.tracks_dir = self.data_dir / "tracks"  # learned track profiles (tracks/profiles.py)
+        self.positions_dir = self.data_dir / "positions"  # per-lap world positions (Motion packets)
+        self.track_maps_dir = self.data_dir / "track_maps"  # generated circuit traces
 
     @staticmethod
     def _check_id(item_id):

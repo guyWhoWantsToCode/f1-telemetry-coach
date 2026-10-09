@@ -1,5 +1,16 @@
 /* The only place that talks to the backend. Components call these functions, never fetch(). */
-import type { CompareResponse, ComparisonDetail, EventsResponse, LapsResponse, RecordingStatus } from './types'
+import type {
+  CatalogTrack,
+  CompareResponse,
+  ComparisonDetail,
+  EventsResponse,
+  LapMeta,
+  LapPathResponse,
+  LapsResponse,
+  RecordingStatus,
+  TrackMapResponse,
+  TracksResponse,
+} from './types'
 
 export const API_BASE: string = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:8000'
 
@@ -70,3 +81,21 @@ export const getRecordingStatus = (signal?: AbortSignal) =>
 export const startRecording = () => request<RecordingStatus>('/api/recording/start', { method: 'POST' })
 
 export const stopRecording = () => request<RecordingStatus>('/api/recording/stop', { method: 'POST' })
+
+export const getTracks = (signal?: AbortSignal) => request<TracksResponse>('/api/tracks', { signal })
+
+export const getTrackCatalog = (signal?: AbortSignal) =>
+  request<{ tracks: CatalogTrack[] }>('/api/catalog/tracks', { signal })
+
+/** Manually assign a lap with no known circuit. Persisted by the backend; the telemetry is not changed. */
+export const assignLapTrack = (lapId: string, trackId: number) =>
+  request<Pick<LapMeta, 'track_id' | 'track_name' | 'track_source'>>(
+    `/api/laps/${encodeURIComponent(lapId)}/track`,
+    { method: 'POST', body: JSON.stringify({ track_id: trackId }) },
+  )
+
+export const getTrackMap = (trackId: number, signal?: AbortSignal) =>
+  request<TrackMapResponse>(`/api/tracks/${trackId}/map`, { signal })
+
+export const getLapPath = (lapId: string, signal?: AbortSignal) =>
+  request<LapPathResponse>(`/api/laps/${encodeURIComponent(lapId)}/path`, { signal })

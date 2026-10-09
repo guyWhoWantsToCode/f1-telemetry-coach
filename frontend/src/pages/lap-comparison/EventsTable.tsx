@@ -1,5 +1,6 @@
 import type { EventRow, EventStatus } from '../../api/types'
 import { Badge, Table, Td, Th } from '../../design'
+import { cornerHint, eventLabel } from '../../lib/eventLabel'
 import { deltaTone, fmtMeters, fmtSeconds, fmtSigned } from '../../lib/format'
 
 const STATE_LABEL: Record<EventStatus, string> = {
@@ -30,7 +31,7 @@ export function EventsTable({ events }: { events: EventRow[] }) {
     <Table caption="Detected corner and braking events">
       <thead>
         <tr>
-          <Th numeric>#</Th>
+          <Th>Event</Th>
           <Th numeric>Distance</Th>
           <Th numeric title="Comparison minus reference through the event. Positive = comparison lost time.">Time</Th>
           <Th numeric title="Negative = comparison braked earlier, positive = later">Braking</Th>
@@ -53,11 +54,10 @@ export function EventsTable({ events }: { events: EventRow[] }) {
 }
 
 function EventRowView({ row, hasNote }: { row: EventRow; hasNote: boolean }) {
-  const number = row.name.replace(/^Event\s*/, '')
   return (
     <>
       <tr className={hasNote ? 'has-note' : undefined}>
-        <Td numeric>{number}</Td>
+        <Td><span className={row.corner_label ? 'event-label event-label--mapped' : 'event-label'} title={cornerHint(row)}>{eventLabel(row)}</span></Td>
         <Td numeric>{fmtMeters(row.position_m)}</Td>
         <Td numeric tone={deltaTone(row.time_delta_ms)}>
           {row.time_delta_ms === null ? '—' : fmtSeconds(row.time_delta_ms)}

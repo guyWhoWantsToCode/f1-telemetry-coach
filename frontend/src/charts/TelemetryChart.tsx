@@ -145,7 +145,16 @@ export function TelemetryChart(props: TelemetryChartProps) {
     })
     observer.observe(el)
 
+    // The track map asks for a distance to be shown: put this chart's cursor there.
+    const offFocus = store.onFocus((distance) => {
+      const left = plot.valToPos(distance, 'x')
+      if (Number.isFinite(left) && left >= 0 && left <= plot.bbox.width / uPlot.pxRatio) {
+        plot.setCursor({ left, top: plot.bbox.height / uPlot.pxRatio / 2 })
+      }
+    })
+
     return () => {
+      offFocus()
       observer.disconnect()
       plot.destroy()
     }

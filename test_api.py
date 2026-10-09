@@ -65,6 +65,8 @@ class LapsTests(ApiTestCase):
             "id": REF, "filename": f"{REF}.csv", "session_uid": SESSION, "lap_number": 1,
             "lap_time_ms": 60000, "lap_time": "1:00.000", "valid": True, "samples": 201,
             "start_distance_m": 0.0, "end_distance_m": 1000.0,
+            "track_id": None, "track_name": None, "track_source": None,  # recorded before track identity
+            "has_positions": False,  # recorded before position data existed
         })
         self.assertEqual([lap["valid"] for lap in body["laps"]], [True, True, False])
 

@@ -9,6 +9,11 @@ so when frame_id (the header's m_overallFrameIdentifier, which never rewinds aft
 flashback) is given, each Lap Data packet is paired with the telemetry of the SAME frame,
 whichever of the two arrives first. Without frame_id the most recent telemetry is used.
 
+World positions (Motion packets) are optional. With a `positions_dir`, the car's X/Y/Z for each
+saved sample is written to `<positions_dir>/<lap id>.csv` as a sidecar, so the lap CSV itself
+and every older recording are untouched. Positions are paired by the same frame identifier, in
+whichever order the packets arrive; a lap with no positions simply gets no sidecar.
+
 A sample is taken whenever the lap distance has advanced SAMPLE_SPACING_M beyond the last
 saved sample. A lap is only
 recorded if it was seen from the start (first sample within START_WINDOW_M of the line),
@@ -24,6 +29,8 @@ MIN_ROWS = 10  # shorter laps (e.g. a reset right after the line) are discarded
 FRAMES_KEPT = 8  # recent telemetry frames remembered for frame matching
 LAP_TIME_WAIT_PACKETS = 30  # wait this many Lap Data packets for the last-lap time to update
 
+POSITION_COLUMNS = ["lap_distance_m", "pos_x", "pos_y", "pos_z"]
+
 CSV_COLUMNS = [
     "lap", "lap_distance_m", "lap_time_ms", "speed_kmh", "throttle", "brake",
     "steer", "gear", "engine_rpm", "drs", "invalid",
@@ -38,8 +45,11 @@ def format_lap_time_for_filename(ms):
 
 
 class LapRecorder:
-    def __init__(self, out_dir="data/laps"):
+    def __init__(self, out_dir="data/laps", positions_dir=None):
         self.out_dir = Path(out_dir)
+        self.positions_dir = Path(positions_dir) if positions_dir is not None else None
+        self._motion_by_frame = {}  # frame id -> WorldPosition, newest last
+        self.position_write_failures = 0
         self._telemetry = None  # latest telemetry (used when no frame id is given)
         self._by_frame = {}  # frame id -> telemetry, newest last
         self._waiting = None  # (session_uid, frame_id, lap) still waiting for its telemetry
@@ -50,6 +60,8 @@ class LapRecorder:
         self._session_uid = session_uid
         self._lap_num = None
         self._rows = []  # rows of the lap in progress
+        self._positions = []  # WorldPosition (or None) for each row, same order
+        self._row_frames = {}  # frame id -> (positions list, row index): lets late Motion fill a row
         self._recording = False
         self._invalid = False
         self._last_distance = None
@@ -57,6 +69,16 @@ class LapRecorder:
         self._prev_last_lap_ms = None  # last-lap time reported before the current lap began
         self._pending = None  # finished lap waiting for its lap time: (lap_num, rows, invalid)
         self._pending_packets = 0
+
+    def on_motion(self, position, frame_id):
+        """The player's world position for a game frame. May arrive before or after that frame's
+        Lap Data and Car Telemetry; a row already recorded for the frame is filled in."""
+        self._motion_by_frame[frame_id] = position
+        if len(self._motion_by_frame) > FRAMES_KEPT:
+            del self._motion_by_frame[next(iter(self._motion_by_frame))]
+        target = self._row_frames.get(frame_id)
+        if target is not None and target[0][target[1]] is None:
+            target[0][target[1]] = position
 
     def on_telemetry(self, telemetry, frame_id=None):
         self._telemetry = telemetry
@@ -68,7 +90,7 @@ class LapRecorder:
         if self._waiting and self._waiting[1] == frame_id:  # lap packet arrived first
             session_uid, _, lap = self._waiting
             self._waiting = None
-            return self._process(session_uid, lap, telemetry)
+            return self._process(session_uid, lap, telemetry, frame_id)
         return None
 
     def on_lap_data(self, session_uid, lap, frame_id=None):
@@ -76,17 +98,17 @@ class LapRecorder:
             return self._process(session_uid, lap, self._telemetry)
         saved = None
         if self._waiting:  # its telemetry never showed up: still run lap bookkeeping
-            old_session, _, old_lap = self._waiting
+            old_session, old_frame, old_lap = self._waiting
             self._waiting = None
             self.unmatched_samples += 1
-            saved = self._process(old_session, old_lap, None)
+            saved = self._process(old_session, old_lap, None, old_frame)
         telemetry = self._by_frame.get(frame_id)
         if telemetry is None:
             self._waiting = (session_uid, frame_id, lap)  # telemetry may arrive after it
             return saved
-        return self._process(session_uid, lap, telemetry) or saved
+        return self._process(session_uid, lap, telemetry, frame_id) or saved
 
-    def _process(self, session_uid, lap, telemetry):
+    def _process(self, session_uid, lap, telemetry, frame_id=None):
         saved = None
         if session_uid != self._session_uid:
             saved = self._write_pending(None)  # don't lose a finished lap of the old session
@@ -95,7 +117,7 @@ class LapRecorder:
         if lap.current_lap_num != self._lap_num:
             if self._recording and len(self._rows) >= MIN_ROWS:
                 saved = self._write_pending(None) or saved
-                self._pending = (self._lap_num, self._rows, self._invalid)
+                self._pending = (self._lap_num, self._rows, self._invalid, self._positions)
                 self._pending_packets = 0
             self._prev_last_lap_ms = self._seen_last_lap_ms
             self._start_lap(lap)
@@ -105,7 +127,7 @@ class LapRecorder:
             saved = self._write_pending(lap.last_lap_time_ms) or saved
 
         if self._recording:
-            self._maybe_sample(lap, telemetry)
+            self._maybe_sample(lap, telemetry, frame_id)
         if self._pending:
             self._pending_packets += 1
             if self._pending_packets >= LAP_TIME_WAIT_PACKETS:
@@ -116,12 +138,13 @@ class LapRecorder:
     def _start_lap(self, lap):
         self._lap_num = lap.current_lap_num
         self._rows = []
+        self._positions = []
         self._invalid = False
         self._last_distance = None
         # Only record laps we see begin at the line, not ones joined mid-lap.
         self._recording = lap.lap_distance <= START_WINDOW_M
 
-    def _maybe_sample(self, lap, telemetry):
+    def _maybe_sample(self, lap, telemetry, frame_id=None):
         if telemetry is None or lap.pit_status != 0 or lap.lap_distance < 0:
             return  # in the pits, before the line, or no telemetry yet
         self._invalid = self._invalid or bool(lap.current_lap_invalid)  # sticky for the lap
@@ -134,11 +157,16 @@ class LapRecorder:
             t.gear, t.engine_rpm, t.drs, int(self._invalid),
         ])
         self._last_distance = lap.lap_distance
+        self._positions.append(self._motion_by_frame.get(frame_id) if frame_id is not None else None)
+        if frame_id is not None:
+            self._row_frames[frame_id] = (self._positions, len(self._rows) - 1)
+            if len(self._row_frames) > FRAMES_KEPT:
+                del self._row_frames[next(iter(self._row_frames))]
 
     def _write_pending(self, lap_time_ms):
         if not self._pending:
             return None
-        lap_num, rows, invalid = self._pending
+        lap_num, rows, invalid, positions = self._pending
         self._pending = None
         if invalid:  # make the invalid flag consistent across the whole saved lap
             for row in rows:
@@ -151,4 +179,19 @@ class LapRecorder:
             writer = csv.writer(f)
             writer.writerow(CSV_COLUMNS)
             writer.writerows(rows)
+        self._write_positions(path.stem, rows, positions)
         return path
+
+    def _write_positions(self, lap_id, rows, positions):
+        """Sidecar with one position per saved row. Not written when no position was recorded."""
+        if self.positions_dir is None or not any(p is not None for p in positions):
+            return
+        try:
+            self.positions_dir.mkdir(parents=True, exist_ok=True)
+            with open(self.positions_dir / f"{lap_id}.csv", "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(POSITION_COLUMNS)
+                for row, p in zip(rows, positions):
+                    writer.writerow([row[1]] + ([p.x, p.y, p.z] if p is not None else ["", "", ""]))
+        except OSError:
+            self.position_write_failures += 1  # the lap itself is already saved

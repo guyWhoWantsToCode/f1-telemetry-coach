@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "source": "F1 25 UDP specification v3, appendix 'Track IDs' (docs/f1_25_udp_spec_v3.pdf). Names are the game's labels; circuit_name is added only where it is certain.",
+  "tracks": [
+    {
+      "track_id": 0,
+      "name": "Melbourne",
+      "circuit_name": null
+    },
+    {
+      "track_id": 2,
+      "name": "Shanghai",
+      "circuit_name": null
+    },
+    {
+      "track_id": 3,
+      "name": "Sakhir (Bahrain)",
+      "circuit_name": null
+    },
+    {
+      "track_id": 4,
+      "name": "Catalunya",
+      "circuit_name": null
+    },
+    {
+      "track_id": 5,
+      "name": "Monaco",
+      "circuit_name": null
+    },
+    {
+      "track_id": 6,
+      "name": "Montreal",
+      "circuit_name": null
+    },
+    {
+      "track_id": 7,
+      "name": "Silverstone",
+      "circuit_name": null
+    },
+    {
+      "track_id": 9,
+      "name": "Hungaroring",
+      "circuit_name": null
+    },
+    {
+      "track_id": 10,
+      "name": "Spa",
+      "circuit_name": null
+    },
+    {
+      "track_id": 11,
+      "name": "Monza",
+      "circuit_name": null
+    },
+    {
+      "track_id": 12,
+      "name": "Singapore",
+      "circuit_name": null
+    },
+    {
+      "track_id": 13,
+      "name": "Suzuka",
+      "circuit_name": null
+    },
+    {
+      "track_id": 14,
+      "name": "Abu Dhabi",
+      "circuit_name": null
+    },
+    {
+      "track_id": 15,
+      "name": "Texas",
+      "circuit_name": "Circuit of the Americas"
+    },
+    {
+      "track_id": 16,
+      "name": "Brazil",
+      "circuit_name": null
+    },
+    {
+      "track_id": 17,
+      "name": "Austria",
+      "circuit_name": null
+    },
+    {
+      "track_id": 19,
+      "name": "Mexico",
+      "circuit_name": null
+    },
+    {
+      "track_id": 20,
+      "name": "Baku (Azerbaijan)",
+      "circuit_name": null
+    },
+    {
+      "track_id": 26,
+      "name": "Zandvoort",
+      "circuit_name": null
+    },
+    {
+      "track_id": 27,
+      "name": "Imola",
+      "circuit_name": null
+    },
+    {
+      "track_id": 29,
+      "name": "Jeddah",
+      "circuit_name": null
+    },
+    {
+      "track_id": 30,
+      "name": "Miami",
+      "circuit_name": null
+    },
+    {
+      "track_id": 31,
+      "name": "Las Vegas",
+      "circuit_name": null
+    },
+    {
+      "track_id": 32,
+      "name": "Losail",
+      "circuit_name": null
+    },
+    {
+      "track_id": 39,
+      "name": "Silverstone (Reverse)",
+      "circuit_name": null
+    },
+    {
+      "track_id": 40,
+      "name": "Austria (Reverse)",
+      "circuit_name": null
+    },
+    {
+      "track_id": 41,
+      "name": "Zandvoort (Reverse)",
+      "circuit_name": null
+    }
+  ]
+}

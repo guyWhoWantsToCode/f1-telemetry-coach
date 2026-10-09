@@ -8,6 +8,7 @@ from dataclasses import asdict, replace
 
 from api.storage import DataStore, NotFoundError
 from corner_analysis import CornerError, Thresholds, analyze, load_aligned
+from tracks.corners import map_comparison_events
 from lap_compare import CompareError, check_laps, compare_laps, load_lap, save_comparison, summarize
 
 COMPARISON_SEPARATOR = "__vs__"  # how lap_compare.save_comparison names its files
@@ -24,8 +25,15 @@ def format_lap_time(ms):
     return f"{minutes}:{rest / 1000:06.3f}"
 
 
-def lap_metadata(lap):
+NO_TRACK = {"track_id": None, "track_name": None, "track_source": None}
+
+
+def lap_metadata(lap, tracks=None):
+    """Lap summary. With a TrackService it also says which circuit the lap belongs to (or that
+    it is unknown: laps recorded before track identity existed)."""
     return {
+        **(tracks.lap_track_info(lap.path.stem) if tracks is not None else NO_TRACK),
+        "has_positions": bool(tracks is not None and tracks.has_positions(lap.path.stem)),
         "id": lap.path.stem,
         "filename": lap.path.name,
         "session_uid": lap.session,
@@ -39,24 +47,24 @@ def lap_metadata(lap):
     }
 
 
-def list_laps(store):
+def list_laps(store, tracks=None):
     laps, skipped = [], []
     for path in store.lap_paths():
         try:
-            laps.append(lap_metadata(load_lap(path)))
+            laps.append(lap_metadata(load_lap(path), tracks))
         except CompareError as e:
             skipped.append({"id": path.stem, "error": str(e)})
     laps.sort(key=lambda m: (m["session_uid"] or "", m["lap_number"]))
     return {"laps": laps, "skipped": skipped}
 
 
-def lap_detail(store, lap_id):
+def lap_detail(store, lap_id, tracks=None):
     path = store.lap_path(lap_id)
     try:
         lap = load_lap(path)
     except CompareError as e:
         raise UnprocessableError(str(e)) from e
-    return {**lap_metadata(lap), "samples_data": store.read_columns(path)}
+    return {**lap_metadata(lap, tracks), "samples_data": store.read_columns(path)}
 
 
 def _summary(rows, ref, cmp_):
@@ -79,7 +87,7 @@ def _summary(rows, ref, cmp_):
     }
 
 
-def run_comparison(store, reference_id, comparison_id, allow_invalid=False):
+def run_comparison(store, reference_id, comparison_id, allow_invalid=False, tracks=None):
     """Compare two recorded laps with lap_compare and save the aligned CSV."""
     if reference_id == comparison_id:
         raise UnprocessableError("reference and comparison must be different laps")
@@ -93,8 +101,8 @@ def run_comparison(store, reference_id, comparison_id, allow_invalid=False):
     path = save_comparison(rows, ref, cmp_, store.comparisons_dir)
     return {
         "id": path.stem,
-        "reference": lap_metadata(ref),
-        "comparison": lap_metadata(cmp_),
+        "reference": lap_metadata(ref, tracks),
+        "comparison": lap_metadata(cmp_, tracks),
         "warnings": warnings,
         "summary": _summary(rows, ref, cmp_),
     }
@@ -114,15 +122,15 @@ def _laps_of(store, comparison_id):
     return laps[0], laps[1]
 
 
-def comparison_detail(store, comparison_id):
+def comparison_detail(store, comparison_id, tracks=None):
     path = store.comparison_path(comparison_id)
     data = store.read_columns(path)
     if not data.get("distance_m"):
         raise UnprocessableError(f"comparison {comparison_id} has no rows")
     rows = [{"distance_m": d, "delta_ms": t} for d, t in zip(data["distance_m"], data["delta_ms"])]
     ref, cmp_ = _laps_of(store, comparison_id)
-    out = {"id": comparison_id, "reference": ref and lap_metadata(ref),
-           "comparison": cmp_ and lap_metadata(cmp_), "data": data}
+    out = {"id": comparison_id, "reference": ref and lap_metadata(ref, tracks),
+           "comparison": cmp_ and lap_metadata(cmp_, tracks), "data": data}
     if ref and cmp_:
         out["summary"] = _summary(rows, ref, cmp_)
     else:  # lap files are gone: summarize from the aligned data alone
@@ -132,18 +140,45 @@ def comparison_detail(store, comparison_id):
     return out
 
 
-def _event_json(ev):
+def _event_json(ev, corner=None, track_known=False):
+    """One event row. The generic event identity (name, number, status, differences) is always
+    present; corner fields are added from the corner mapping when a track is known."""
     d = asdict(ev)  # dataclass fields incl. nested events
     d.update(
         comparable=ev.comparable,
         brake_start_diff_m=ev.brake_start_diff_m, min_speed_diff_kmh=ev.min_speed_diff_kmh,
         pickup_diff_m=ev.pickup_diff_m, full_throttle_diff_m=ev.full_throttle_diff_m,
+        event_number=int(ev.name.rsplit(" ", 1)[-1]),
     )
+    if corner is None or not track_known:
+        d.update(corner_label=None, corner_status="unavailable", corner_confidence=None,
+                 corner_numbers=[], corner_candidates=[], corner_reason="circuit is not known for these laps")
+    else:
+        d.update(corner_label=corner.label, corner_status=corner.status,
+                 corner_confidence=corner.confidence if corner.label else None,
+                 corner_numbers=list(corner.corners), corner_candidates=list(corner.candidates),
+                 corner_reason=corner.reason)
     return d
 
 
-def comparison_events(store, comparison_id, min_drop=None, merge_rise=None, brake_on=None):
-    """Run corner_analysis on a saved comparison. Optional args override thresholds."""
+def _comparison_track(store, comparison_id, tracks):
+    """The circuit shared by both laps of a comparison, or None if unknown / they differ."""
+    if tracks is None:
+        return None, "no track memory"
+    ref, cmp_ = _laps_of(store, comparison_id)
+    if ref is None or cmp_ is None:
+        return None, "the lap files are no longer available"
+    a, b = tracks.lap_track_info(ref.path.stem), tracks.lap_track_info(cmp_.path.stem)
+    if a["track_id"] is None or b["track_id"] is None:
+        return None, "the circuit of these laps is unknown"
+    if a["track_id"] != b["track_id"]:
+        return None, "the two laps are from different circuits"
+    return a, None
+
+
+def comparison_events(store, comparison_id, min_drop=None, merge_rise=None, brake_on=None, tracks=None):
+    """Run corner_analysis on a saved comparison. Optional args override thresholds. When the
+    laps' circuit is known, each event also carries the corner it was mapped to (by distance)."""
     path = store.comparison_path(comparison_id)
     overrides = {k: v for k, v in (("min_drop_kmh", min_drop), ("merge_rise_kmh", merge_rise),
                                    ("brake_on", brake_on)) if v is not None}
@@ -152,5 +187,16 @@ def comparison_events(store, comparison_id, min_drop=None, merge_rise=None, brak
         results = analyze(load_aligned(path), th)
     except CornerError as e:
         raise UnprocessableError(str(e)) from e
-    return {"comparison_id": comparison_id, "thresholds": asdict(th),
-            "count": len(results), "events": [_event_json(r) for r in results]}
+
+    track, why_not = _comparison_track(store, comparison_id, tracks)
+    meta = tracks.corner_metadata(track["track_id"]) if track else None
+    matches = map_comparison_events(meta, results) if track else [None] * len(results)
+    return {
+        "comparison_id": comparison_id, "thresholds": asdict(th),
+        "track": {**track, "has_corner_metadata": meta is not None,
+                  "has_corner_distances": bool(meta and meta.has_corner_distances),
+                  "reason": None} if track else {**NO_TRACK, "has_corner_metadata": False,
+                                                 "has_corner_distances": False, "reason": why_not},
+        "count": len(results),
+        "events": [_event_json(r, m, track is not None) for r, m in zip(results, matches)],
+    }

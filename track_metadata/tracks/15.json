@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "track_id": 15,
+  "name": "Circuit of the Americas",
+  "expected_length_m": 5513,
+  "length_note": "Published circuit length (5.513 km). The live value reported by the game's Session packet is stored separately in the learned track profile.",
+  "corners": [
+    {
+      "number": 1,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 2,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 3,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 4,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 5,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 6,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 7,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 8,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 9,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 10,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 11,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 12,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 13,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 14,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 15,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 16,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 17,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 18,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 19,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    },
+    {
+      "number": 20,
+      "name": null,
+      "range_m": null,
+      "representative_m": null
+    }
+  ],
+  "complexes": [],
+  "calibration": {
+    "status": "corner_numbers_only",
+    "notes": "The circuit has 20 numbered turns. No corner distances and no corner complexes have been entered yet, because they must come from a trustworthy source, not from test laps.",
+    "needed": [
+      "range_m [start, end] lap distance in metres for each of T1..T20",
+      "representative_m (e.g. apex) for each corner where useful",
+      "complexes[] for sequences that produce one braking/lift event over several corners",
+      "optional official corner names"
+    ]
+  }
+}

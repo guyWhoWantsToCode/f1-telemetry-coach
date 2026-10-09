@@ -72,8 +72,7 @@ const pair = (data: { ref: number[]; cmp: number[] }): ChartSeries[] => [
   { label: 'Comparison', values: data.cmp, colorVar: '--chart-cmp' },
 ]
 
-function Charts({ detail, data }: { detail: ComparisonDetail; data: ChartData }) {
-  const store = useMemo(() => createCursorStore(), [])
+function Charts({ detail, data, store }: { detail: ComparisonDetail; data: ChartData; store: CursorStore }) {
   const speed = useMemo(() => pair(data.speed), [data])
   const throttle = useMemo(() => pair(data.throttle), [data])
   const brake = useMemo(() => pair(data.brake), [data])
@@ -141,7 +140,8 @@ function Charts({ detail, data }: { detail: ComparisonDetail; data: ChartData })
 }
 
 /** The telemetry chart panel with its loading, error, empty and malformed-data states. */
-export function TelemetryPanel({ state }: { state: AsyncState<ComparisonDetail> }) {
+export function TelemetryPanel({ state, store }: { state: AsyncState<ComparisonDetail>; store?: CursorStore }) {
+  const ownStore = useMemo(() => createCursorStore(), [])
   const parsed = useMemo(() => {
     if (state.status !== 'ready') return null
     try {
@@ -157,7 +157,7 @@ export function TelemetryPanel({ state }: { state: AsyncState<ComparisonDetail> 
   else if (state.status === 'error') body = <div className="panel__body"><Notice tone="error" title="Could not load telemetry">{state.error}</Notice></div>
   else if (parsed?.problem?.kind === 'empty') body = <Placeholder>This comparison has no telemetry points to chart.</Placeholder>
   else if (parsed?.problem) body = <div className="panel__body"><Notice tone="error" title="Telemetry data is malformed">{parsed.problem.message}</Notice></div>
-  else if (parsed?.data && state.status === 'ready') body = <Charts detail={state.data} data={parsed.data} />
+  else if (parsed?.data && state.status === 'ready') body = <Charts detail={state.data} data={parsed.data} store={store ?? ownStore} />
 
   return <Panel title="Telemetry by lap distance" flush surface="plot">{body}</Panel>
 }
